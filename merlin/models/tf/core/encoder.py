@@ -1,16 +1,19 @@
 from typing import Optional, Union
 
+import numpy as np
 import tensorflow as tf
 from packaging import version
 
+import merlin.io
 from merlin.models.tf.core import combinators
 from merlin.models.tf.inputs.base import InputBlockV2
+from merlin.models.tf.inputs.embedding import CombinerType, EmbeddingTable
 from merlin.models.tf.utils import tf_utils
-from merlin.schema import Schema
+from merlin.schema import ColumnSchema, Schema, Tags
 
 
 @tf.keras.utils.register_keras_serializable(package="merlin.models")
-class EncoderBlock(tf.keras.Model):
+class Encoder(tf.keras.Model):
     """Block that can be used for prediction & evaluation but not for training
 
     Parameters
@@ -48,6 +51,73 @@ class EncoderBlock(tf.keras.Model):
         self.blocks = [input_block] + list(blocks) if blocks else [input_block]
         self.pre = pre
         self.post = post
+
+    def encode(
+        self,
+        dataset: merlin.io.Dataset,
+        batch_size: int,
+        id_col: Optional[Union[str, ColumnSchema, Schema, Tags]] = None,
+        **kwargs,
+    ) -> merlin.io.Dataset:
+        output_schema = None
+        if id_col:
+            if isinstance(id_col, Schema):
+                output_schema = id_col
+            elif isinstance(id_col, ColumnSchema):
+                output_schema = Schema([id_col])
+            elif isinstance(id_col, str):
+                output_schema = Schema([self.schema[id_col]])
+            elif isinstance(id_col, Tags):
+                output_schema = self.schema.select_by_tag(id_col)
+            else:
+                raise ValueError(f"Invalid id_col: {id_col}")
+
+        return self.batch_predict(
+            dataset,
+            batch_size=batch_size,
+            output_schema=output_schema,
+            output_concat_func=np.concatenate,
+            **kwargs,
+        )
+
+    def batch_predict(
+        self,
+        dataset: merlin.io.Dataset,
+        batch_size: int,
+        output_schema: Optional[Schema] = None,
+        **kwargs,
+    ) -> merlin.io.Dataset:
+        """Batched prediction using Dask.
+        Parameters
+        ----------
+        dataset: merlin.io.Dataset
+            Dataset to predict on.
+        batch_size: int
+            Batch size to use for prediction.
+        Returns
+        -------
+        merlin.io.Dataset
+        """
+        if hasattr(dataset, "schema"):
+            if not set(self.schema.column_names).issubset(set(dataset.schema.column_names)):
+                raise ValueError(
+                    f"Model schema {self.schema.column_names} does not match dataset schema"
+                    + f" {dataset.schema.column_names}"
+                )
+
+        # Check if merlin-dataset is passed
+        if hasattr(dataset, "to_ddf"):
+            dataset = dataset.to_ddf()
+
+        from merlin.models.tf.utils.batch_utils import TFModelEncode
+
+        model_encode = TFModelEncode(self, batch_size=batch_size, **kwargs)
+        encode_kwargs = {}
+        if output_schema:
+            encode_kwargs["filter_input_columns"] = output_schema.column_names
+        predictions = dataset.map_partitions(model_encode, **encode_kwargs)
+
+        return merlin.io.Dataset(predictions)
 
     def call(self, inputs, **kwargs):
         if "features" not in kwargs:
@@ -137,7 +207,10 @@ class EncoderBlock(tf.keras.Model):
         if post is not None:
             post = tf.keras.layers.deserialize(post, custom_objects=custom_objects)
 
-        return cls(*layers, pre=pre, post=post)
+        output = Encoder(*layers, pre=pre, post=post)
+        output.__class__ = cls
+
+        return output
 
     def get_config(self):
         config = tf_utils.maybe_serialize_keras_objects(self, {}, ["pre", "post"])
@@ -145,3 +218,47 @@ class EncoderBlock(tf.keras.Model):
             config[i] = tf.keras.utils.serialize_keras_object(layer)
 
         return config
+
+
+@tf.keras.utils.register_keras_serializable(package="merlin.models")
+class EmbeddingEncoder(Encoder):
+    def __init__(
+        self,
+        schema: Union[ColumnSchema, Schema],
+        dim: int,
+        embeddings_initializer="uniform",
+        embeddings_regularizer=None,
+        activity_regularizer=None,
+        embeddings_constraint=None,
+        mask_zero=False,
+        input_length=None,
+        sequence_combiner: Optional[CombinerType] = None,
+        trainable=True,
+        name=None,
+        dtype=None,
+        dynamic=False,
+    ):
+        if isinstance(schema, ColumnSchema):
+            col = schema
+        else:
+            col = schema.first
+        table = EmbeddingTable(
+            dim,
+            col,
+            embeddings_initializer=embeddings_initializer,
+            embeddings_regularizer=embeddings_regularizer,
+            activity_regularizer=activity_regularizer,
+            embeddings_constraint=embeddings_constraint,
+            mask_zero=mask_zero,
+            input_length=input_length,
+            sequence_combiner=sequence_combiner,
+            trainable=trainable,
+            name=name,
+            dtype=dtype,
+            dynamic=dynamic,
+        )
+
+        super().__init__(table, tf.keras.layers.Lambda(lambda x: x[col.name]))
+
+    def to_dataset(self, gpu=True) -> merlin.io.Dataset:
+        return self.blocks[0].to_dataset(gpu=gpu)

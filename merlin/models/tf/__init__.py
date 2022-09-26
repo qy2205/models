@@ -76,7 +76,8 @@ from merlin.models.tf.core.combinators import (
     SequentialBlock,
 )
 from merlin.models.tf.core.encoder import EncoderBlock
-from merlin.models.tf.inputs.base import InputBlock, InputBlockV2
+from merlin.models.tf.inputs.base import InputBlock
+from merlin.models.tf.inputs.block import InputBlockV2
 from merlin.models.tf.inputs.continuous import Continuous, ContinuousFeatures, ContinuousProjection
 from merlin.models.tf.inputs.embedding import (
     AverageEmbeddingsByWeightFeature,

@@ -4,7 +4,7 @@ import tensorflow as tf
 from packaging import version
 
 from merlin.models.tf.core import combinators
-from merlin.models.tf.inputs.base import InputBlockV2
+from merlin.models.tf.inputs.block import InputBlockV2
 from merlin.models.tf.utils import tf_utils
 from merlin.schema import Schema
 

@@ -109,6 +109,7 @@ from merlin.models.tf.models.retrieval import (
     YoutubeDNNRetrievalModel,
 )
 from merlin.models.tf.outputs.base import ModelOutput
+from merlin.models.tf.outputs.block import OutputBlock
 from merlin.models.tf.outputs.classification import BinaryOutput, CategoricalOutput
 from merlin.models.tf.outputs.contrastive import ContrastiveOutput
 from merlin.models.tf.outputs.regression import RegressionOutput
@@ -203,6 +204,7 @@ __all__ = [
     "FMBlock",
     "ToOneHot",
     "ModelOutput",
+    "OutputBlock",
     "BinaryOutput",
     "RegressionOutput",
     "CategoricalOutput",
